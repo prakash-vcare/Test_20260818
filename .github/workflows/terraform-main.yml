@@ -1,12 +1,15 @@
 name: Terraform Production
 
 on:
-  push:
+  pull_request:
+    types:
+      - closed
     branches:
       - main
 
 permissions:
   contents: read
+  pull-requests: read
   id-token: write
 
 env:
@@ -20,6 +23,9 @@ jobs:
 
   terraform-plan:
     name: Terraform Plan
+
+    if: github.event.pull_request.merged == true
+
     runs-on: ubuntu-latest
 
     steps:
@@ -29,6 +35,8 @@ jobs:
       # ------------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       # ------------------------------------------------------
       # Azure Login - App Registration / OIDC
@@ -51,24 +59,21 @@ jobs:
       # ------------------------------------------------------
       - name: Terraform Format Check
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform fmt -check -recursive
+        run: terraform fmt -check -recursive
 
       # ------------------------------------------------------
       # Terraform Init
       # ------------------------------------------------------
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform init -input=false
+        run: terraform init -input=false
 
       # ------------------------------------------------------
       # Terraform Validate
       # ------------------------------------------------------
       - name: Terraform Validate
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform validate
+        run: terraform validate
 
       # ------------------------------------------------------
       # Terraform Plan
@@ -91,7 +96,6 @@ jobs:
           path: environment/tfplan
           retention-days: 5
 
-
   # ==========================================================
   # TERRAFORM APPLY
   # ==========================================================
@@ -99,14 +103,15 @@ jobs:
   terraform-apply:
     name: Terraform Production Apply
 
+    if: github.event.pull_request.merged == true
+
     needs:
       - terraform-plan
 
     runs-on: ubuntu-latest
 
     # --------------------------------------------------------
-    # IMPORTANT:
-    # Configure "terraform-production" environment in GitHub
+    # Configure "terraform-production" GitHub Environment
     # with Required Reviewers.
     # --------------------------------------------------------
     environment:
@@ -119,6 +124,8 @@ jobs:
       # ------------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       # ------------------------------------------------------
       # Azure Login - App Registration / OIDC
@@ -141,8 +148,7 @@ jobs:
       # ------------------------------------------------------
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform init -input=false
+        run: terraform init -input=false
 
       # ------------------------------------------------------
       # Download Terraform Plan
