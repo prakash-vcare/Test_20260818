@@ -80,7 +80,7 @@ devvms = {
     location            = "koreacentral"
     nic_name            = "nic-fronend-vm"
     resource_group_name = "rg_pch"
-    vm_size             = "Standard_D2s_v3"
+    vm_size             = "Standard_D2s_v5"
 
     storage_image_reference = {
       publisher = "Canonical"
