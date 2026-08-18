@@ -1,14 +1,13 @@
-name: Terraform PR
+name: Terraform Feature
 
 on:
   push:
     branches:
       - 'feature/**'
-  pull_request:
+
+  pull_request_review:
     types:
-      - opened
-      - synchronize
-      - reopened
+      - submitted
 
 permissions:
   contents: write
@@ -16,12 +15,16 @@ permissions:
   id-token: write
 
 env:
-  TF_WORKING_DIR: environment/test
+  TF_WORKING_DIR: ./environment
 
 jobs:
 
+  # ============================================================
+  # JOB 1: Terraform Plan on Feature Branch
+  # ============================================================
   terraform-plan:
-    name: Terraform Plan
+    name: Terraform Format, Validate & Plan
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     env:
@@ -40,16 +43,28 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init -input=false
+        run: |
+          terraform init -input=false
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform fmt -check -recursive
 
       - name: Terraform Validate
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform validate
+        run: |
+          terraform validate
 
       - name: Terraform Plan
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform plan -input=false
+        run: |
+          terraform plan -input=false
 
+
+  # ============================================================
+  # JOB 2: Create Pull Request
+  # ============================================================
   create-pr:
     name: Create Pull Request
     if: github.event_name == 'push'
@@ -61,8 +76,12 @@ jobs:
       - name: Create Pull Request
         env:
           GH_TOKEN: ${{ github.token }}
+
         run: |
+
           BRANCH="${{ github.ref_name }}"
+
+          echo "Feature Branch: $BRANCH"
 
           EXISTING_PR=$(gh pr list \
             --repo "${{ github.repository }}" \
@@ -73,32 +92,75 @@ jobs:
             --jq '.[0].number')
 
           if [ -n "$EXISTING_PR" ]; then
+
             echo "Pull Request already exists: #$EXISTING_PR"
+
           else
+
             gh pr create \
               --repo "${{ github.repository }}" \
               --base main \
               --head "$BRANCH" \
               --title "Terraform changes: $BRANCH" \
-              --body "Terraform Plan completed successfully. Please review and approve this Pull Request."
+              --body "Terraform Format, Validate and Plan completed successfully.
+
+Please review the Terraform changes and manually approve this Pull Request.
+
+Auto merge will be enabled only after a reviewer approves this Pull Request."
 
             echo "Pull Request created successfully."
+
           fi
 
+
+  # ============================================================
+  # JOB 3: Enable Auto Merge ONLY AFTER MANUAL APPROVAL
+  # ============================================================
   enable-auto-merge:
-    name: Enable Auto Merge
-    if: github.event_name == 'pull_request'
-    needs: terraform-plan
+    name: Enable Auto Merge After Approval
+
+    if: >
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'approved'
+
     runs-on: ubuntu-latest
 
     steps:
 
+      - name: Verify Pull Request Approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+        run: |
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+
+          echo "Checking approval for PR #$PR_NUMBER"
+
+          APPROVALS=$(gh pr view "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
+            --json reviews \
+            --jq '[.reviews[] | select(.state == "APPROVED")] | length')
+
+          echo "Number of approvals: $APPROVALS"
+
+          if [ "$APPROVALS" -lt 1 ]; then
+            echo "No approved review found."
+            exit 1
+          fi
+
+          echo "Manual PR approval confirmed."
+
+
       - name: Enable Auto Merge
         env:
           GH_TOKEN: ${{ github.token }}
+
         run: |
+
           PR_NUMBER="${{ github.event.pull_request.number }}"
 
+          echo "Manual approval received."
           echo "Enabling auto merge for PR #$PR_NUMBER"
 
           gh pr merge "$PR_NUMBER" \
@@ -106,4 +168,7 @@ jobs:
             --auto \
             --squash
 
-          echo "Auto merge enabled."
+          echo "======================================"
+          echo "Auto Merge Enabled"
+          echo "PR #$PR_NUMBER"
+          echo "======================================"
