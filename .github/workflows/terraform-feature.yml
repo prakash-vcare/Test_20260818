@@ -5,12 +5,6 @@ on:
     branches:
       - 'feature/**'
 
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-
   pull_request_review:
     types:
       - submitted
@@ -25,16 +19,9 @@ env:
 
 jobs:
 
-  # ============================================================
-  # Terraform Format, Validate & Plan
-  # ============================================================
   terraform-plan:
     name: Terraform Format, Validate & Plan
-
-    if: |
-      github.event_name == 'push' ||
-      github.event_name == 'pull_request'
-
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     env:
@@ -68,17 +55,10 @@ jobs:
         run: terraform plan -input=false
 
 
-  # ============================================================
-  # Create Pull Request
-  # ============================================================
   create-pr:
     name: Create Pull Request
-
+    needs: terraform-plan
     if: github.event_name == 'push'
-
-    needs:
-      - terraform-plan
-
     runs-on: ubuntu-latest
 
     steps:
@@ -88,10 +68,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
         run: |
-
           BRANCH="${{ github.ref_name }}"
-
-          echo "Checking existing Pull Request..."
 
           EXISTING_PR=$(gh pr list \
             --repo "${{ github.repository }}" \
@@ -102,37 +79,21 @@ jobs:
             --jq '.[0].number')
 
           if [ -n "$EXISTING_PR" ]; then
-
             echo "Pull Request already exists: #$EXISTING_PR"
-
           else
-
-            cat > pr-body.txt <<'EOF'
-Please review the Terraform changes and manually approve this Pull Request.
-
-Terraform Format, Validate and Plan have completed successfully.
-
-Auto merge will be enabled ONLY after a reviewer approves this Pull Request.
-EOF
-
             gh pr create \
               --repo "${{ github.repository }}" \
               --base main \
               --head "$BRANCH" \
               --title "Terraform changes: $BRANCH" \
-              --body-file pr-body.txt
+              --body "Terraform Format, Validate and Plan completed successfully. Please review and manually approve this Pull Request. Auto merge will be enabled only after a reviewer approves this Pull Request."
 
             echo "Pull Request created successfully."
-
           fi
 
 
-  # ============================================================
-  # Enable Auto Merge ONLY AFTER MANUAL APPROVAL
-  # ============================================================
   auto-merge-after-approval:
     name: Auto Merge After Manual Approval
-
     if: |
       github.event_name == 'pull_request_review' &&
       github.event.action == 'submitted' &&
@@ -142,23 +103,18 @@ EOF
 
     steps:
 
-      - name: Check Manual Approval
+      - name: Display Approval Information
         run: |
+          echo "Manual approval received."
+          echo "Reviewer: ${{ github.event.review.user.login }}"
+          echo "PR Number: ${{ github.event.pull_request.number }}"
+          echo "Review State: ${{ github.event.review.state }}"
 
-          echo "=========================================="
-          echo "MANUAL PR APPROVAL RECEIVED"
-          echo "=========================================="
-
-          echo "Reviewer : ${{ github.event.review.user.login }}"
-          echo "PR       : #${{ github.event.pull_request.number }}"
-          echo "State    : ${{ github.event.review.state }}"
-
-      - name: Verify PR Is Still Open
+      - name: Check PR Status
         env:
           GH_TOKEN: ${{ github.token }}
 
         run: |
-
           PR_NUMBER="${{ github.event.pull_request.number }}"
 
           STATE=$(gh pr view "$PR_NUMBER" \
@@ -166,10 +122,10 @@ EOF
             --json state \
             --jq '.state')
 
-          echo "Current PR State: $STATE"
+          echo "PR State: $STATE"
 
           if [ "$STATE" != "OPEN" ]; then
-            echo "PR is not open. Nothing to merge."
+            echo "PR is not open."
             exit 1
           fi
 
@@ -178,13 +134,9 @@ EOF
           GH_TOKEN: ${{ github.token }}
 
         run: |
-
           PR_NUMBER="${{ github.event.pull_request.number }}"
 
-          echo "=========================================="
-          echo "MANUAL APPROVAL CONFIRMED"
-          echo "=========================================="
-
+          echo "Manual approval confirmed."
           echo "Enabling auto merge for PR #$PR_NUMBER"
 
           gh pr merge "$PR_NUMBER" \
@@ -193,6 +145,4 @@ EOF
             --squash \
             --delete-branch=false
 
-          echo "=========================================="
-          echo "AUTO MERGE ENABLED"
-          echo "=========================================="
+          echo "Auto merge enabled successfully."
