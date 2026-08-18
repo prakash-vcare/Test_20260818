@@ -1,0 +1,134 @@
+name: Terraform Feature Plan
+
+on:
+  push:
+    branches:
+      - feature/test
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+env:
+  TF_WORKING_DIR: ./environment
+
+jobs:
+
+  terraform-feature-plan:
+    name: Terraform Format, Validate & Plan
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform fmt -check -recursive
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform validate
+
+      - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan \
+            -input=false \
+            -var-file="terraform.tfvars" \
+            -out="tfplan"
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-feature-plan
+          path: environment/tfplan
+          retention-days: 5
+
+  create-pr:
+    name: Create PR and Enable Auto Merge
+    needs: terraform-feature-plan
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or Find Pull Request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+
+          PR_NUMBER=$(gh pr list \
+            --head "feature/test" \
+            --base "main" \
+            --state open \
+            --json number \
+            --jq '.[0].number')
+
+          if [ -z "$PR_NUMBER" ]; then
+
+            echo "No open PR found."
+            echo "Creating new PR..."
+
+            PR_URL=$(gh pr create \
+              --base main \
+              --head feature/test \
+              --title "Terraform Changes - feature/test" \
+              --body "## Terraform Infrastructure Change
+
+          Automated Terraform validation and plan completed successfully.
+
+          ### Checks
+          - Terraform Format
+          - Terraform Init
+          - Terraform Validate
+          - Terraform Plan
+
+          Please review and approve this PR.
+
+          After required approval, GitHub will automatically merge this PR.")
+
+            PR_NUMBER=$(gh pr view "$PR_URL" \
+              --json number \
+              --jq '.number')
+
+          else
+
+            echo "Existing PR found: #$PR_NUMBER"
+
+          fi
+
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Enable Auto Merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr merge "${{ steps.pr.outputs.PR_NUMBER }}" \
+            --auto \
+            --squash \
+            --delete-branch=false

@@ -1,0 +1,165 @@
+name: Terraform Production
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_WORKING_DIR: ./environment
+
+jobs:
+
+  # ==========================================================
+  # TERRAFORM PLAN
+  # ==========================================================
+
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ------------------------------------------------------
+      # Checkout Repository
+      # ------------------------------------------------------
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------
+      # Azure Login - App Registration / OIDC
+      # ------------------------------------------------------
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ------------------------------------------------------
+      # Setup Terraform
+      # ------------------------------------------------------
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # ------------------------------------------------------
+      # Terraform Format
+      # ------------------------------------------------------
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform fmt -check -recursive
+
+      # ------------------------------------------------------
+      # Terraform Init
+      # ------------------------------------------------------
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false
+
+      # ------------------------------------------------------
+      # Terraform Validate
+      # ------------------------------------------------------
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform validate
+
+      # ------------------------------------------------------
+      # Terraform Plan
+      # ------------------------------------------------------
+      - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan \
+            -input=false \
+            -var-file="terraform.tfvars" \
+            -out="tfplan"
+
+      # ------------------------------------------------------
+      # Upload Terraform Plan
+      # ------------------------------------------------------
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-production-plan
+          path: environment/tfplan
+          retention-days: 5
+
+
+  # ==========================================================
+  # TERRAFORM APPLY
+  # ==========================================================
+
+  terraform-apply:
+    name: Terraform Production Apply
+
+    needs:
+      - terraform-plan
+
+    runs-on: ubuntu-latest
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Configure "terraform-production" environment in GitHub
+    # with Required Reviewers.
+    # --------------------------------------------------------
+    environment:
+      name: terraform-production
+
+    steps:
+
+      # ------------------------------------------------------
+      # Checkout Repository
+      # ------------------------------------------------------
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------
+      # Azure Login - App Registration / OIDC
+      # ------------------------------------------------------
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ------------------------------------------------------
+      # Setup Terraform
+      # ------------------------------------------------------
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # ------------------------------------------------------
+      # Terraform Init
+      # ------------------------------------------------------
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false
+
+      # ------------------------------------------------------
+      # Download Terraform Plan
+      # ------------------------------------------------------
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-production-plan
+          path: environment
+
+      # ------------------------------------------------------
+      # Terraform Apply
+      # ------------------------------------------------------
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform apply \
+            -input=false \
+            -auto-approve \
+            tfplan
