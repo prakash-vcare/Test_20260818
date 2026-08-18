@@ -100,17 +100,17 @@ jobs:
               --title "Terraform Changes - feature/test" \
               --body "## Terraform Infrastructure Change
 
-              Automated Terraform validation and plan completed successfully.
+          Automated Terraform validation and plan completed successfully.
 
-              ### Checks
-              - Terraform Format
-              - Terraform Init
-              - Terraform Validate
-              - Terraform Plan
+          ### Checks
+          - Terraform Format
+          - Terraform Init
+          - Terraform Validate
+          - Terraform Plan
 
-              Please review and approve this PR.
+          Please review and approve this PR.
 
-              After required approval, GitHub will automatically merge this PR.")
+          After required approval, GitHub will automatically merge this PR.")
 
             PR_NUMBER=$(gh pr view "$PR_URL" \
               --json number \
