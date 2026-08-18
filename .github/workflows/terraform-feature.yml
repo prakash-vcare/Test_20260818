@@ -1,9 +1,15 @@
-name: Terraform Feature
+name: Terraform PR
 
 on:
   push:
     branches:
       - 'feature/**'
+
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
   pull_request_review:
     types:
@@ -15,16 +21,20 @@ permissions:
   id-token: write
 
 env:
-  TF_WORKING_DIR: ./environment
+  TF_WORKING_DIR: environment
 
 jobs:
 
   # ============================================================
-  # JOB 1: Terraform Plan on Feature Branch
+  # Terraform Format, Validate & Plan
   # ============================================================
   terraform-plan:
     name: Terraform Format, Validate & Plan
-    if: github.event_name == 'push'
+
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request'
+
     runs-on: ubuntu-latest
 
     env:
@@ -43,32 +53,32 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform init -input=false
+        run: terraform init -input=false
 
       - name: Terraform Format Check
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform fmt -check -recursive
+        run: terraform fmt -check -recursive
 
       - name: Terraform Validate
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform validate
+        run: terraform validate
 
       - name: Terraform Plan
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform plan -input=false
+        run: terraform plan -input=false
 
 
   # ============================================================
-  # JOB 2: Create Pull Request
+  # Create Pull Request
   # ============================================================
   create-pr:
     name: Create Pull Request
+
     if: github.event_name == 'push'
-    needs: terraform-plan
+
+    needs:
+      - terraform-plan
+
     runs-on: ubuntu-latest
 
     steps:
@@ -81,7 +91,7 @@ jobs:
 
           BRANCH="${{ github.ref_name }}"
 
-          echo "Feature Branch: $BRANCH"
+          echo "Checking existing Pull Request..."
 
           EXISTING_PR=$(gh pr list \
             --repo "${{ github.repository }}" \
@@ -97,16 +107,20 @@ jobs:
 
           else
 
+            cat > pr-body.txt <<'EOF'
+Please review the Terraform changes and manually approve this Pull Request.
+
+Terraform Format, Validate and Plan have completed successfully.
+
+Auto merge will be enabled ONLY after a reviewer approves this Pull Request.
+EOF
+
             gh pr create \
               --repo "${{ github.repository }}" \
               --base main \
               --head "$BRANCH" \
               --title "Terraform changes: $BRANCH" \
-              --body "Terraform Format, Validate and Plan completed successfully.
-
-Please review the Terraform changes and manually approve this Pull Request.
-
-Auto merge will be enabled only after a reviewer approves this Pull Request."
+              --body-file pr-body.txt
 
             echo "Pull Request created successfully."
 
@@ -114,20 +128,32 @@ Auto merge will be enabled only after a reviewer approves this Pull Request."
 
 
   # ============================================================
-  # JOB 3: Enable Auto Merge ONLY AFTER MANUAL APPROVAL
+  # Enable Auto Merge ONLY AFTER MANUAL APPROVAL
   # ============================================================
-  enable-auto-merge:
-    name: Enable Auto Merge After Approval
+  auto-merge-after-approval:
+    name: Auto Merge After Manual Approval
 
-    if: >
+    if: |
       github.event_name == 'pull_request_review' &&
+      github.event.action == 'submitted' &&
       github.event.review.state == 'approved'
 
     runs-on: ubuntu-latest
 
     steps:
 
-      - name: Verify Pull Request Approval
+      - name: Check Manual Approval
+        run: |
+
+          echo "=========================================="
+          echo "MANUAL PR APPROVAL RECEIVED"
+          echo "=========================================="
+
+          echo "Reviewer : ${{ github.event.review.user.login }}"
+          echo "PR       : #${{ github.event.pull_request.number }}"
+          echo "State    : ${{ github.event.review.state }}"
+
+      - name: Verify PR Is Still Open
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -135,22 +161,17 @@ Auto merge will be enabled only after a reviewer approves this Pull Request."
 
           PR_NUMBER="${{ github.event.pull_request.number }}"
 
-          echo "Checking approval for PR #$PR_NUMBER"
-
-          APPROVALS=$(gh pr view "$PR_NUMBER" \
+          STATE=$(gh pr view "$PR_NUMBER" \
             --repo "${{ github.repository }}" \
-            --json reviews \
-            --jq '[.reviews[] | select(.state == "APPROVED")] | length')
+            --json state \
+            --jq '.state')
 
-          echo "Number of approvals: $APPROVALS"
+          echo "Current PR State: $STATE"
 
-          if [ "$APPROVALS" -lt 1 ]; then
-            echo "No approved review found."
+          if [ "$STATE" != "OPEN" ]; then
+            echo "PR is not open. Nothing to merge."
             exit 1
           fi
-
-          echo "Manual PR approval confirmed."
-
 
       - name: Enable Auto Merge
         env:
@@ -160,15 +181,18 @@ Auto merge will be enabled only after a reviewer approves this Pull Request."
 
           PR_NUMBER="${{ github.event.pull_request.number }}"
 
-          echo "Manual approval received."
+          echo "=========================================="
+          echo "MANUAL APPROVAL CONFIRMED"
+          echo "=========================================="
+
           echo "Enabling auto merge for PR #$PR_NUMBER"
 
           gh pr merge "$PR_NUMBER" \
             --repo "${{ github.repository }}" \
             --auto \
-            --squash
+            --squash \
+            --delete-branch=false
 
-          echo "======================================"
-          echo "Auto Merge Enabled"
-          echo "PR #$PR_NUMBER"
-          echo "======================================"
+          echo "=========================================="
+          echo "AUTO MERGE ENABLED"
+          echo "=========================================="
