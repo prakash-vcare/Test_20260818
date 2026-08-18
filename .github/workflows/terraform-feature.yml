@@ -1,9 +1,14 @@
-name: Terraform Feature Plan
+name: Terraform PR
 
 on:
   push:
     branches:
-      - feature/test
+      - 'feature/**'
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: write
@@ -11,124 +16,94 @@ permissions:
   id-token: write
 
 env:
-  TF_WORKING_DIR: ./environment
+  TF_WORKING_DIR: environment/test
 
 jobs:
 
-  terraform-feature-plan:
-    name: Terraform Format, Validate & Plan
+  terraform-plan:
+    name: Terraform Plan
     runs-on: ubuntu-latest
+
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
     steps:
 
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Format Check
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform fmt -check -recursive
-
       - name: Terraform Init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform init -input=false
+        run: terraform init -input=false
 
       - name: Terraform Validate
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform validate
+        run: terraform validate
 
       - name: Terraform Plan
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform plan \
-            -input=false \
-            -var-file="terraform.tfvars" \
-            -out="tfplan"
-
-      - name: Upload Terraform Plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-feature-plan
-          path: environment/tfplan
-          retention-days: 5
+        run: terraform plan -input=false
 
   create-pr:
-    name: Create PR and Enable Auto Merge
-    needs: terraform-feature-plan
+    name: Create Pull Request
+    if: github.event_name == 'push'
+    needs: terraform-plan
     runs-on: ubuntu-latest
 
     steps:
 
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Create or Find Pull Request
-        id: pr
+      - name: Create Pull Request
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          BRANCH="${{ github.ref_name }}"
 
-          PR_NUMBER=$(gh pr list \
-            --head "feature/test" \
-            --base "main" \
+          EXISTING_PR=$(gh pr list \
+            --repo "${{ github.repository }}" \
+            --head "$BRANCH" \
+            --base main \
             --state open \
             --json number \
             --jq '.[0].number')
 
-          if [ -z "$PR_NUMBER" ]; then
-
-            echo "No open PR found."
-            echo "Creating new PR..."
-
-            PR_URL=$(gh pr create \
-              --base main \
-              --head feature/test \
-              --title "Terraform Changes - feature/test" \
-              --body "## Terraform Infrastructure Change
-
-          Automated Terraform validation and plan completed successfully.
-
-          ### Checks
-          - Terraform Format
-          - Terraform Init
-          - Terraform Validate
-          - Terraform Plan
-
-          Please review and approve this PR.
-
-          After required approval, GitHub will automatically merge this PR.")
-
-            PR_NUMBER=$(gh pr view "$PR_URL" \
-              --json number \
-              --jq '.number')
-
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Pull Request already exists: #$EXISTING_PR"
           else
+            gh pr create \
+              --repo "${{ github.repository }}" \
+              --base main \
+              --head "$BRANCH" \
+              --title "Terraform changes: $BRANCH" \
+              --body "Terraform Plan completed successfully. Please review and approve this Pull Request."
 
-            echo "Existing PR found: #$PR_NUMBER"
-
+            echo "Pull Request created successfully."
           fi
 
-          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+  enable-auto-merge:
+    name: Enable Auto Merge
+    if: github.event_name == 'pull_request'
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+
+    steps:
 
       - name: Enable Auto Merge
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh pr merge "${{ steps.pr.outputs.PR_NUMBER }}" \
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+
+          echo "Enabling auto merge for PR #$PR_NUMBER"
+
+          gh pr merge "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
             --auto \
-            --squash \
-            --delete-branch=false
+            --squash
+
+          echo "Auto merge enabled."

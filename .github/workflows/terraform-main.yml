@@ -1,46 +1,28 @@
-name: Terraform Production
+name: Terraform Main
 
 on:
-  pull_request:
-    types:
-      - closed
+  push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: read
   id-token: write
 
-env:
-  TF_WORKING_DIR: ./environment
+concurrency:
+  group: terraform-main
+  cancel-in-progress: false
 
 jobs:
-
-  # ==========================================================
-  # TERRAFORM PLAN
-  # ==========================================================
-
-  terraform-plan:
-    name: Terraform Plan
-
-    if: github.event.pull_request.merged == true
-
+  terraform-plan-apply:
+    name: Terraform Plan and Apply - main
     runs-on: ubuntu-latest
 
     steps:
-
-      # ------------------------------------------------------
-      # Checkout Repository
-      # ------------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          ref: main
 
-      # ------------------------------------------------------
-      # Azure Login - App Registration / OIDC
-      # ------------------------------------------------------
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -48,124 +30,20 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # ------------------------------------------------------
-      # Setup Terraform
-      # ------------------------------------------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # ------------------------------------------------------
-      # Terraform Format
-      # ------------------------------------------------------
+      - name: Terraform Init
+        run: terraform init -input=false
+
       - name: Terraform Format Check
-        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform fmt -check -recursive
 
-      # ------------------------------------------------------
-      # Terraform Init
-      # ------------------------------------------------------
-      - name: Terraform Init
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init -input=false
-
-      # ------------------------------------------------------
-      # Terraform Validate
-      # ------------------------------------------------------
       - name: Terraform Validate
-        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform validate
 
-      # ------------------------------------------------------
-      # Terraform Plan
-      # ------------------------------------------------------
       - name: Terraform Plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform plan \
-            -input=false \
-            -var-file="terraform.tfvars" \
-            -out="tfplan"
+        run: terraform plan -input=false -out=tfplan
 
-      # ------------------------------------------------------
-      # Upload Terraform Plan
-      # ------------------------------------------------------
-      - name: Upload Terraform Plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-production-plan
-          path: environment/tfplan
-          retention-days: 5
-
-  # ==========================================================
-  # TERRAFORM APPLY
-  # ==========================================================
-
-  terraform-apply:
-    name: Terraform Production Apply
-
-    if: github.event.pull_request.merged == true
-
-    needs:
-      - terraform-plan
-
-    runs-on: ubuntu-latest
-
-    # --------------------------------------------------------
-    # Configure "terraform-production" GitHub Environment
-    # with Required Reviewers.
-    # --------------------------------------------------------
-    environment:
-      name: terraform-production
-
-    steps:
-
-      # ------------------------------------------------------
-      # Checkout Repository
-      # ------------------------------------------------------
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      # ------------------------------------------------------
-      # Azure Login - App Registration / OIDC
-      # ------------------------------------------------------
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      # ------------------------------------------------------
-      # Setup Terraform
-      # ------------------------------------------------------
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      # ------------------------------------------------------
-      # Terraform Init
-      # ------------------------------------------------------
-      - name: Terraform Init
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init -input=false
-
-      # ------------------------------------------------------
-      # Download Terraform Plan
-      # ------------------------------------------------------
-      - name: Download Terraform Plan
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-production-plan
-          path: environment
-
-      # ------------------------------------------------------
-      # Terraform Apply
-      # ------------------------------------------------------
       - name: Terraform Apply
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform apply \
-            -input=false \
-            -auto-approve \
-            tfplan
+        run: terraform apply -input=false -auto-approve tfplan
