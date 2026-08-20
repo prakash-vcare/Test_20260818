@@ -3,6 +3,10 @@ devrgs = {
     name     = "rg_pch"
     location = "koreacentral"
   }
+  rg2 = {
+    name     = "rg_pch1"
+    location = "koreacentral"
+  }
 }
 devvnet = {
   vnet1 = {
